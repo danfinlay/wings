@@ -16,7 +16,7 @@
 -export([we/3]).  %% For plugins
 
 -export([work/2,smooth/2,prepare/3,prepare/4,flat_faces/2]).
--export([enable_pointers/2,disable_pointers/2]).
+-export([enable_pointers/2,disable_pointers/2,get_vertex_pointer/1]).
 -export([face_vertex_count/1,has_active_color/1]).
 %% Tangent calcs
 -export([add_ts/5, add_tangents/3]).
@@ -109,6 +109,12 @@ disable_pointers(#vab{}=Vab, Extra) ->
     gl:disableClientState(?GL_VERTEX_ARRAY),
     [disable_pointer(What, Vab) || What <- Extra],
     ok.
+
+%% get_vertex_pointer(#vab{}) -> {Stride,VertexBinary}
+%%  Get vertex data and stride.
+
+get_vertex_pointer(#vab{face_vs={_,_}=Vs}) ->
+    Vs.
 
 enable_pointer(face_normals, #vab{face_fn=Ns}) ->
     enable_normal_pointer(Ns);

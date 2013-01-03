@@ -1006,7 +1006,8 @@ do_dlo_pick(#dlo{mirror=Matrix,open=Open,src_we=#we{id=Id}}=D0, _, OneHit, Acc0)
     set_pick_matrix(),
     {D,Acc}.
 
-do_dlo_pick_0(Id, #dlo{vab=#vab{face_vs=Vs,face_map=Map0}}=D0, OneHit, Acc0) ->
+do_dlo_pick_0(Id, #dlo{vab=#vab{face_map=Map0}=Vab}=D0, OneHit, Acc0) ->
+    Vs = wings_draw_setup:get_vertex_pointer(Vab),
     case wpc_pick:faces(Vs, OneHit) of
 	[] ->
 	    %% No hit.
