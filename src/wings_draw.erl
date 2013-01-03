@@ -501,14 +501,13 @@ update_sel(#dlo{}=D) -> D.
 
 %% Select all faces.
 update_sel_all(#dlo{vab=#vab{face_vs=Vs}=Vab}=D) when Vs =/= none ->
-    List = gl:genLists(1),
-    gl:newList(List, ?GL_COMPILE),
-    wings_draw_setup:enable_pointers(Vab, []),
     Count = wings_draw_setup:face_vertex_count(D),
-    gl:drawArrays(?GL_TRIANGLES, 0, Count),
-    wings_draw_setup:disable_pointers(Vab, []),
-    gl:endList(),
-    D#dlo{sel=List};
+    F = fun() ->
+		wings_draw_setup:enable_pointers(Vab, []),
+		gl:drawArrays(?GL_TRIANGLES, 0, Count),
+		wings_draw_setup:disable_pointers(Vab, [])
+	end,
+    D#dlo{sel={call,F,Vab}};
 update_sel_all(#dlo{src_we=#we{fs=Ftab}}=D) ->
     %% No vertex arrays to re-use. Rebuild from scratch.
     update_face_sel(gb_trees:keys(Ftab), D).
@@ -910,16 +909,9 @@ tricky_share({X,Y,Z}, {_,_,Z}=Old) ->
 
 draw_flat_faces(#dlo{vab=Vab}, St) ->
     draw_flat_faces(Vab, St);
-draw_flat_faces(#vab{mat_map=MatMap}=D, #st{mat=Mtab}) ->
+draw_flat_faces(#vab{mat_map=MatMap}=Vab, #st{mat=Mtab}) ->
     Extra = [colors,face_normals,uvs,tangents],
-    ActiveColor = wings_draw_setup:has_active_color(D),
-    wings_draw_setup:enable_pointers(D, Extra),
-    Dl = gl:genLists(1),
-    gl:newList(Dl, ?GL_COMPILE),
-    draw_mat_faces(MatMap, Mtab, ActiveColor),
-    gl:endList(),
-    wings_draw_setup:disable_pointers(D, Extra),
-    Dl.
+    draw_mat_faces(Vab, Extra, MatMap, Mtab).
 
 %%%
 %%% Smooth drawing.
@@ -928,10 +920,8 @@ draw_flat_faces(#vab{mat_map=MatMap}=D, #st{mat=Mtab}) ->
 draw_smooth_faces(#dlo{vab=Vab},St) ->
     draw_smooth_faces(Vab,St);
 
-draw_smooth_faces(#vab{mat_map=MatMap}=D, #st{mat=Mtab}) ->
+draw_smooth_faces(#vab{mat_map=MatMap}=Vab, #st{mat=Mtab}) ->
     Extra = [colors,vertex_normals,uvs,tangents],
-    ActiveColor = wings_draw_setup:has_active_color(D),
-    wings_draw_setup:enable_pointers(D, Extra),
 
     %% Partition into transparent and solid material face groups.
     {Transparent,Solid} =
@@ -940,30 +930,30 @@ draw_smooth_faces(#vab{mat_map=MatMap}=D, #st{mat=Mtab}) ->
 			end, MatMap),
 
     %% Create display list for solid faces.
-    ListOp = gl:genLists(1),
-    gl:newList(ListOp, ?GL_COMPILE),
-    draw_mat_faces(Solid, Mtab, ActiveColor),
-    gl:endList(),
+    DrawSolid = draw_mat_faces(Vab, Extra, Solid, Mtab),
 
     %% Create display list for transparent faces if there are
     %% any transparent faces.
-    Res = case Transparent of
-	      [] ->
-		  %% All faces are solid.
-		  {[ListOp,none],false};
-	      _ ->
-		  %% Create the display list for the transparent faces.
-		  ListTr = gl:genLists(1),
-		  gl:newList(ListTr, ?GL_COMPILE),
-		  draw_mat_faces(Transparent, Mtab, ActiveColor),
-		  gl:endList(),
-		  {[ListOp,ListTr],true}
-	  end,
+    case Transparent of
+	[] ->
+	    %% All faces are solid.
+	    {[DrawSolid,none],false};
+	_ ->
+	    %% Create the display list for the transparent faces.
+	    DrawTr = draw_mat_faces(Vab, Extra, Transparent, Mtab),
+	    {[DrawSolid,DrawTr],true}
+    end.
 
-    wings_draw_setup:disable_pointers(D, Extra),
-    Res.
+draw_mat_faces(Vab, Extra, MatGroups, Mtab) ->
+    ActiveColor = wings_draw_setup:has_active_color(Vab),
+    D = fun() ->
+		wings_draw_setup:enable_pointers(Vab, Extra),
+		do_draw_mat_faces(MatGroups, Mtab, ActiveColor),
+		wings_draw_setup:disable_pointers(Vab, Extra)
+	end,
+    {call,D,Vab}.
 
-draw_mat_faces(MatGroups, Mtab, ActiveColor) ->
+do_draw_mat_faces(MatGroups, Mtab, ActiveColor) ->
     %% Setup shader for materials 
     Progs = get(light_shaders),
     UseSceneLights = wings_pref:get_value(scene_lights) andalso

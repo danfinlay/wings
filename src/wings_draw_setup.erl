@@ -97,10 +97,11 @@ has_active_color(#vab{face_vc=Color}) ->
 %%  Enable the vertex buffer pointer, and optionally other pointers.
 
 enable_pointers(#vab{face_vs={Stride,BinVs}}=Vab, Extra) ->
+    bind_buffer(Vab, BinVs),
     gl:vertexPointer(3, ?GL_FLOAT, Stride, BinVs),
     gl:enableClientState(?GL_VERTEX_ARRAY),
     [enable_pointer(What, Vab) || What <- Extra],
-    ok.
+    gl:bindBuffer(?GL_ARRAY_BUFFER, 0).
 
 %% disable_pointers(#vab{}, [ExtraPointer])
 %%    ExtraPointer = face_normals | vertex_normals | colors | uvs | tangents
@@ -109,47 +110,62 @@ enable_pointers(#vab{face_vs={Stride,BinVs}}=Vab, Extra) ->
 disable_pointers(#vab{}=Vab, Extra) ->
     gl:disableClientState(?GL_VERTEX_ARRAY),
     [disable_pointer(What, Vab) || What <- Extra],
+    gl:bindBuffer(?GL_ARRAY_BUFFER, 0),
     ok.
 
 %% get_vertex_pointer(#vab{}) -> {Stride,VertexBinary}
 %%  Get vertex data and stride.
 
-get_vertex_pointer(#vab{face_vs={_,_}=Vs}) ->
-    Vs.
+get_vertex_pointer(#vab{data=Data,face_vs={Stride,_}}) ->
+    {Stride,Data}.
 
-enable_pointer(face_normals, #vab{face_fn=Ns}) ->
-    enable_normal_pointer(Ns);
-enable_pointer(vertex_normals, #vab{face_sn=Ns}) ->
-    enable_normal_pointer(Ns);
-enable_pointer(colors, #vab{face_vc=FaceCol}) ->
+enable_pointer(face_normals, #vab{face_fn=Ns}=Vab) ->
+    enable_normal_pointer(Vab, Ns);
+enable_pointer(vertex_normals, #vab{face_sn=Ns}=Vab) ->
+    enable_normal_pointer(Vab, Ns);
+enable_pointer(colors, #vab{face_vc=FaceCol}=Vab) ->
     case FaceCol of
 	none ->
 	    ok;
 	{Stride,Color} ->
+	    bind_buffer(Vab, Color),
 	    gl:colorPointer(3, ?GL_FLOAT, Stride, Color),
 	    gl:enableClientState(?GL_COLOR_ARRAY)
     end;
-enable_pointer(uvs, #vab{face_uv=FaceUV}) ->
+enable_pointer(uvs, #vab{face_uv=FaceUV}=Vab) ->
     case FaceUV of
 	none ->
 	    ok;
 	{Stride,UV} ->
+	    bind_buffer(Vab, UV),
 	    gl:texCoordPointer(2, ?GL_FLOAT, Stride, UV),
 	    gl:enableClientState(?GL_TEXTURE_COORD_ARRAY)
     end;
-enable_pointer(tangents, #vab{face_ts=FaceTs}) ->
+enable_pointer(tangents, #vab{face_ts=FaceTs}=Vab) ->
     case FaceTs of
 	none ->
 	    ok;
 	{Stride,Ts} ->
+	    bind_buffer(Vab, Ts),
 	    gl:vertexAttribPointer(?TANGENT_ATTR, 4, ?GL_FLOAT,
 				   ?GL_FALSE, Stride, Ts),
 	    gl:enableVertexAttribArray(?TANGENT_ATTR)
     end.
 
-enable_normal_pointer({Stride,Ns}) ->
+enable_normal_pointer(Vab, {Stride,Ns}) ->
+    bind_buffer(Vab, Ns),
     gl:normalPointer(?GL_FLOAT, Stride, Ns),
     gl:enableClientState(?GL_NORMAL_ARRAY).
+
+bind_buffer(#vab{id=Vbo}, Data) when is_integer(Vbo) ->
+    if
+	is_binary(Data) ->
+	    gl:bindBuffer(?GL_ARRAY_BUFFER, 0);
+	is_integer(Data) ->
+	    gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo)
+    end;
+bind_buffer(#vab{id=Ref}, _Data) when is_reference(Ref) ->
+    gl:bindBuffer(?GL_ARRAY_BUFFER, 0).
 
 disable_pointer(face_normals, _) ->
     gl:disableClientState(?GL_NORMAL_ARRAY);
@@ -176,6 +192,8 @@ face_vertex_count(#dlo{vab=#vab{mat_map=[{_Mat,_Type,Start,Count}|_]}}) ->
 face_vertex_count(#vab{mat_map=[{_Mat,_Type,Start,Count}|_]}) ->
     Start+Count.
 
+delete_vab(#vab{id=Vbo}) when is_integer(Vbo) ->
+    gl:deleteBuffers([Vbo]);
 delete_vab(#vab{}) ->
     ok.
 
@@ -988,12 +1006,15 @@ create_vab(What, Data, FaceMap, MatInfo) ->
     Stride = lists:foldl(fun(Item, Sum) ->
 				 Sum + width(Item)
 			 end, 0, What),
-    Vab = #vab{face_map=FaceMap,mat_map=MatInfo},
+    [Vbo] = gl:genBuffers(1),
+    gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo),
+    gl:bufferData(?GL_ARRAY_BUFFER, byte_size(Data), Data, ?GL_STATIC_DRAW),
+    gl:bindBuffer(?GL_ARRAY_BUFFER, 0),
+    Vab = #vab{id=Vbo,data=Data,face_map=FaceMap,mat_map=MatInfo},
     create_vab_1(What, 0, Stride, Data, Vab).
 
 create_vab_1([H|T], Pos, Stride, Data0, Vab0) ->
-    <<_:Pos/bytes,Data/binary>> = Data0,
-    Item = {Stride,Data},
+    Item = {Stride,Pos},
     Vab = set_vab_item(H, Item, Vab0),
     create_vab_1(T, Pos+width(H), Stride, Data0, Vab);
 create_vab_1([], _, _, _, Vab) -> Vab.
