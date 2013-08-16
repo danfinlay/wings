@@ -153,27 +153,17 @@ update_edges(D, Pd) ->
 
 update_edges_1(_, _, cage) -> none;
 update_edges_1(_, #sp{vab=#vab{mat_map=MatMap}=Vab}, all) ->
-    Extra = [face_normals],
-    wings_draw_setup:enable_pointers(Vab, Extra),
-    Dl = gl:genLists(1),
-    gl:newList(Dl, ?GL_COMPILE),
     [{_Mat,_Type,Start,MCount}|_] = MatMap,
     Count = Start+MCount,
-    gl:drawArrays(?GL_QUADS, 0, Count),
-    gl:endList(),
-    wings_draw_setup:disable_pointers(Vab, Extra),
-    Dl;
+    fun() ->
+	    Extra = [face_normals],
+	    wings_draw_setup:enable_pointers(Vab, Extra),
+	    gl:drawArrays(?GL_QUADS, 0, Count),
+	    wings_draw_setup:disable_pointers(Vab, Extra)
+    end;
 update_edges_1(#dlo{}, #sp{type={wings_cc,_}, vab=#vab{face_es={0,Bin}}}, some) ->
-    Dl = gl:genLists(1),
-    gl:newList(Dl, ?GL_COMPILE),
-    gl:enableClientState(?GL_VERTEX_ARRAY),
-    wings_draw:drawVertices(?GL_LINES, Bin),
-    gl:disableClientState(?GL_VERTEX_ARRAY),
-    gl:endList(),
-    Dl;
+    wings_dl:new_vbo(Bin, wings_draw:vbo_draw_fun(?GL_LINES, Bin));
 update_edges_1(#dlo{src_we=#we{vp=OldVtab}}, #sp{we=#we{vp=Vtab,es=Etab}=We}, some) ->
-    Dl = gl:genLists(1),
-    gl:newList(Dl, ?GL_COMPILE),
     Edges0 = wings_edge:from_vs(wings_util:array_keys(OldVtab), We),
     case wings_we:is_open(We) of
 	true ->
@@ -189,11 +179,7 @@ update_edges_1(#dlo{src_we=#we{vp=OldVtab}}, #sp{we=#we{vp=Vtab,es=Etab}=We}, so
 			      <<Bin/binary,X1:?F32,Y1:?F32,Z1:?F32,
 			       X2:?F32,Y2:?F32,Z2:?F32>>
 		      end, <<>>, Edges),
-    gl:enableClientState(?GL_VERTEX_ARRAY),
-    wings_draw:drawVertices(?GL_LINES, Bin),
-    gl:disableClientState(?GL_VERTEX_ARRAY),
-    gl:endList(),
-    Dl.
+    wings_dl:new_vbo(Bin, wings_draw:vbo_draw_fun(?GL_LINES, Bin)).
 
 smooth(D=#dlo{proxy=false},_) -> D;
 smooth(D=#dlo{drag=Active},_) when Active =/= none -> D;

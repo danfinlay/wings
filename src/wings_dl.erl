@@ -17,7 +17,7 @@
 -export([init/0,delete_dlists/0,
 	 update/2,map/2,fold/2,changed_materials/1,
 	 display_lists/0,
-	 call/1,mirror_matrix/1]).
+	 call/1,mirror_matrix/1,new_vbo/2]).
 
 %%% This module manages display lists for all objects in a Geometry
 %%% or AutoUV window.
@@ -161,6 +161,24 @@ mirror_matrix(Id) -> fold(fun mirror_matrix/2, Id).
 mirror_matrix(#dlo{mirror=Matrix,src_we=#we{id=Id}}, Id) -> Matrix;
 mirror_matrix(_, Acc) -> Acc.
 
+%% new_vbo(Data, Stride, DrawFun)
+%%  Make a new VBO object that can encapsulate a draw
+%%  operation using a single array.
+
+new_vbo(<<>>, DrawFun) when is_function(DrawFun, 0) ->
+    none;
+new_vbo(Data, DrawFun) when is_function(DrawFun, 0) ->
+    [Vbo] = gl:genBuffers(1),
+    gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo),
+    gl:bufferData(?GL_ARRAY_BUFFER, byte_size(Data), Data, ?GL_STATIC_DRAW),
+    gl:bindBuffer(?GL_ARRAY_BUFFER, 0),
+    D = fun() ->
+		gl:bindBuffer(?GL_ARRAY_BUFFER, Vbo),
+		DrawFun(),
+		gl:bindBuffer(?GL_ARRAY_BUFFER, 0)
+	end,
+    {call,D,{vbo,Vbo}}.
+
 %%%
 %%% Local functions.
 %%%
@@ -246,6 +264,9 @@ delete_lists([]) -> ok;
 delete_lists([{{vab,_},Vab}|Dls]) ->
     wings_draw_setup:delete_vab(Vab),
     delete_lists(Dls);
+delete_lists([{{vbo,Id},Id}|Dls]) ->
+    gl:deleteBuffers([Id]),
+    delete_lists(Dls);
 delete_lists([{{dl,Dl},Dl}|Dls]) ->
     gl:deleteLists(Dl, 1),
     delete_lists(Dls).
@@ -268,6 +289,8 @@ update_seen_1({matrix,_,Dl}, Seen) ->
     update_seen_1(Dl, Seen);
 update_seen_1(#vab{id=Id}=Vab, Seen) ->
     [{{vab,Id},Vab}|Seen];
+update_seen_1({vbo,Id}, Seen) ->
+    [{{vbo,Id},Id}|Seen];
 update_seen_1(Dl, Seen) when is_integer(Dl) ->
     [{{dl,Dl},Dl}|Seen];
 update_seen_1(Dl, Seen) when is_tuple(Dl), element(1, Dl) =:= sp ->
