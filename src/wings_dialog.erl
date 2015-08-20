@@ -821,7 +821,7 @@ build(Ask, {label, Label, Flags}, Parent, Sizer, In)
 			   (Row, Acc) -> ["\n", Row|Acc]
 			end, [], Lines0),
     Text = wxStaticText:new(Parent, ?wxID_ANY, Lines),
-    add_sizer(label, Sizer, Text),
+    add_sizer(label, Sizer, Text, Flags),
     MinSize = case proplists:get_value(min_wsz, Flags, -1) of
 		  Sz when Sz > 0 -> Sz;
 		  Sz ->
@@ -852,11 +852,11 @@ build(Ask, {label_column, Rows, Flags}, Parent, Sizer, In) ->
     Translate = fun({String, Fields}) when is_list(Fields) ->
 			{hframe, [{label, String, [{min_wsz, MinSize}]} | Fields], Fs};
 		   ({String, Fields, LCFlags}) when is_list(Fields) ->
-			{hframe, [{label, String, [{min_wsz, MinSize}]} | Fields], Fs ++ LCFlags};
+			{hframe, [{label, String, [{min_wsz, MinSize}]} | Fields], LCFlags ++ Fs};
 		   ({String, Field}) ->
 			{hframe, [{label, String, [{min_wsz, MinSize}]}, Field], Fs};
 		   ({String, Field, LCFlags}) ->
-			{hframe, [{label, String, [{min_wsz, MinSize}]}, Field], Fs ++ LCFlags};
+			{hframe, [{label, String, [{min_wsz, MinSize}]}, Field], LCFlags ++ Fs};
 		   (separator) ->
 			separator
 		end,
@@ -1182,7 +1182,7 @@ build(Ask, {Label, Def, Flags}, Parent, Sizer, In)
 		     Callback = {callback, notify_event_handler_cb(Ask, preview)},
 		     wxCheckBox:connect(Ctrl, command_checkbox_clicked, [Callback]),
 		     wxCheckBox:setValue(Ctrl, Def),
-		     add_sizer(checkbox, Sizer, Ctrl),
+		     add_sizer(checkbox, Sizer, Ctrl, Flags),
 		     Ctrl
 	     end,
     [#in{key=proplists:get_value(key,Flags), hook=proplists:get_value(hook, Flags),
@@ -1268,7 +1268,11 @@ build_textctrl(Ask, Def, Flags, {MaxSize, Validator}, Parent, Sizer) ->
     PreviewFun = notify_event_handler(Ask, preview),
     Ctrl = wxTextCtrl:new(Parent, ?wxID_ANY, [{value, to_str(Def)}]),
     {CharWidth,_,_,_} = wxWindow:getTextExtent(Ctrl, "W"),
-    case proplists:get_value(width, Flags, default) of
+    DefWidth = case proplists:get_value(proportion, Flags) of
+		   undefined -> default;
+		   _ -> undefined
+	       end,
+    case proplists:get_value(width, Flags, DefWidth) of
 	default ->
 	    wxTextCtrl:setMaxSize(Ctrl, {MaxSize*CharWidth, -1});
 	Width when is_integer(Width) ->
@@ -1320,7 +1324,7 @@ build_textctrl(Ask, Def, Flags, {MaxSize, Validator}, Parent, Sizer) ->
     wxTextCtrl:connect(Ctrl, key_up, [{callback, UseHistory}]),
     wxTextCtrl:connect(Ctrl, command_text_updated, [{callback, TextUpdated}]),
     wxTextCtrl:connect(Ctrl, kill_focus, [{callback, AddHistory}]),
-    add_sizer(text, Sizer, Ctrl),
+    add_sizer(text, Sizer, Ctrl, Flags),
     Ctrl.
 
 setup_choices({Str, Tag}, Ctrl, Def, N) ->
@@ -1411,11 +1415,11 @@ add_sizer(What, Sizer, Ctrl, Opts) ->
     wxSizer:add(Sizer, Ctrl,
 		[{proportion, Proportion},{border, Border},{flag, Flags}]).
 
-sizer_flags(label, ?wxHORIZONTAL)     -> {0, 0, ?wxALIGN_CENTER_VERTICAL};
-sizer_flags(label, ?wxVERTICAL)       -> {1, 0, ?wxALIGN_CENTER_VERTICAL};
+sizer_flags(label, ?wxHORIZONTAL)     -> {0, 2, ?wxRIGHT bor ?wxALIGN_CENTER_VERTICAL};
+sizer_flags(label, ?wxVERTICAL)       -> {1, 2, ?wxRIGHT bor ?wxALIGN_CENTER_VERTICAL};
 sizer_flags(separator, ?wxHORIZONTAL) -> {1, 5, ?wxALL bor ?wxALIGN_CENTER_VERTICAL};
 sizer_flags(separator, ?wxVERTICAL)   -> {0, 5, ?wxALL bor ?wxEXPAND};
-sizer_flags(text, ?wxHORIZONTAL)      -> {1, 0, ?wxALIGN_CENTER_VERTICAL};
+sizer_flags(text, ?wxHORIZONTAL)      -> {1, 2, ?wxRIGHT bor ?wxALIGN_CENTER_VERTICAL};
 sizer_flags(slider, ?wxHORIZONTAL)    -> {2, 0, ?wxALIGN_CENTER_VERTICAL};
 sizer_flags(slider, ?wxVERTICAL)      -> {0, 0, ?wxEXPAND};
 sizer_flags(button, _)                -> {0, 0, ?wxALIGN_CENTER_VERTICAL};
