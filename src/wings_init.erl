@@ -45,10 +45,11 @@ init() ->
     Canvas = wxGLCanvas:new(Frame, [{attribList, gl_attributes()},
 				    {style, Style}]),
 
-    Sizer = wxBoxSizer:new(?wxVERTICAL),
-    wxSizer:add(Sizer, Canvas, [{proportion, 1}, {flag, ?wxEXPAND}]),
-    wxSizer:setSizeHints(Sizer, Canvas),
-    wxFrame:setSizer(Frame, Sizer),
+    %% Sizer = wxBoxSizer:new(?wxVERTICAL),
+    %% wxSizer:add(Sizer, Canvas, [{proportion, 1}, {flag, ?wxEXPAND}]),
+    %% wxSizer:setSizeHints(Sizer, Canvas),
+    %% wxFrame:setSizer(Frame, Sizer),
+    setup_aui(Frame, Canvas),
 
     ?SET(top_frame, Frame),
     ?SET(gl_canvas, Canvas),
@@ -154,12 +155,14 @@ macosx_workaround() ->
 zero() ->
     0.0.
 
-%% setup_aui(Frame) ->
-    %% Manager = wxAuiManager:new([{managed_wnd, Frame}]),
-    %% Pane = wxAuiPaneInfo:new(),
-    %% wxAuiPaneInfo:centrePane(Pane),
-    %% wxAuiPaneInfo:paneBorder(Pane, [{visible, false}]),
-    %% wxAuiManager:addPane(Manager, Canvas, Pane),
+setup_aui(Frame, Canvas) ->
+    Manager = wxAuiManager:new([{managed_wnd, Frame}]),
+    Pane = wxAuiPaneInfo:new(),
+    wxAuiPaneInfo:centrePane(Pane),
+    wxAuiPaneInfo:caption(Pane, "Geometry"),
+    %% wxAuiPaneInfo:paneBorder(Pane, [{visible, true}]),
+    wxAuiManager:addPane(Manager, Canvas, Pane),
+    ?SET(top_manager, Manager),
     %% %% Test
     %% TextCtrl = wxTextCtrl:new(Frame, ?wxID_ANY,
     %% 			      [{size, {300,200}},
@@ -170,4 +173,9 @@ zero() ->
     %% 			 wxAuiPaneInfo:caption(
     %% 			   wxAuiPaneInfo:right(
     %% 			     wxAuiPaneInfo:new()), "One")),
-    %% wxAuiManager:update(Manager),
+    [wxAuiManager:connect(Manager, Ev, [{skip, true}])
+     || Ev <- [aui_pane_button, aui_pane_close, aui_pane_maximize, aui_pane_restore,
+	       aui_render,
+	       aui_find_manager]],
+    wxAuiManager:update(Manager),
+    ok.

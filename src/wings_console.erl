@@ -358,18 +358,21 @@ wc_open_window(#state{lines=Lines}=State, Opts) ->
 	      undefined -> {-1, -1};
 	      SavedPos -> SavedPos
 	  end,
-    Win = wxFrame:new(?GET(top_frame), ?wxID_ANY, Title, [{size, Size}, {pos, Pos}]),
+    %%Win = wxFrame:new(?GET(top_frame), ?wxID_ANY, Title, [{size, Size}, {pos, Pos}]),
     Style = ?wxTE_MULTILINE bor ?wxTE_READONLY bor ?wxTE_RICH2,
-    Ctrl = wxTextCtrl:new(Win, ?wxID_ANY, [{style, Style}]),
+    Ctrl = wxTextCtrl:new(?GET(top_frame), ?wxID_ANY, [{style, Style},{size, Size}, {pos, Pos}]),
 
     wxWindow:setFont(Ctrl, Font),
     wxWindow:setBackgroundColour(Ctrl, wings_color:rgb4bv(wings_pref:get_value(console_color))),
     wxWindow:setForegroundColour(Ctrl, wings_color:rgb4bv(wings_pref:get_value(console_text_color))),
     wxTextCtrl:appendText(Ctrl, [[Line,$\n] || Line <- queue:to_list(Lines)]),
-    wxFrame:show(Win),
-    wxFrame:connect(Win, close_window, [{skip, true}]),
-    wxFrame:connect(Win, size, [{skip, true}]),
-    {State#state{win=Win, ctrl=Ctrl}, {ok, Win}}.
+    %% wxFrame:show(Win),
+    %% wxFrame:connect(Win, close_window, [{skip, true}]),
+    %% wxFrame:connect(Win, size, [{skip, true}]),
+    Pane = wxAuiPaneInfo:caption(wxAuiPaneInfo:bottom(wxAuiPaneInfo:new()), Title),
+    wxAuiManager:addPane(?GET(top_manager), Ctrl, Pane),
+    wxAuiManager:update(?GET(top_manager)),
+    {State#state{ctrl=Ctrl}, {ok, Pane}}.
 
 %%% Other support functions
 %%%

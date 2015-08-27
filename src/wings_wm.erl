@@ -377,12 +377,13 @@ show(Name) ->
 	#win{z=Z}=Win -> put_window_data(Name, Win#win{z=-Z})
     end.
 
-show_wx(Frame) ->
-    case wxFrame:isIconized(Frame) of
-	true -> wxFrame:iconize(Frame, [{iconize, false}]);
-	false -> ok
-    end,
-    wxFrame:raise(Frame).
+show_wx(_Frame) ->
+    %% case wxFrame:isIconized(Frame) of
+    %% 	true -> wxFrame:iconize(Frame, [{iconize, false}]);
+    %% 	false -> ok
+    %% end,
+    %% wxFrame:raise(Frame).
+    ok.
 
 is_hidden(Name) ->
     case get_window_data(Name) of

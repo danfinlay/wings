@@ -42,6 +42,10 @@ init(Icons) ->
     put_state(#io{raw_icons=Icons,cursors=Cursors}).
 
 quit() ->
+    case ?GET(top_manager) of
+	undefined -> ok;
+	Manager -> wxAuiManager:unInit(Manager)
+    end,
     Frame = get(top_frame),
     wxFrame:destroy(Frame),
     wx:destroy().
@@ -393,6 +397,9 @@ wx_translate_1(#wx{event=#wxActivate{active=Active}}) ->
     #expose{active=Active};
 wx_translate_1(#wx{event=#wxClose{}}) ->
     {quit};
+wx_translate_1(Ev=#wx{event=#wxAuiManager{}}) ->
+    io:format("Aui: ~p~n",[Ev]),
+    #expose{active=true};
 wx_translate_1(Ev) ->
     Ev.
 
