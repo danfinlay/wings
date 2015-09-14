@@ -15,6 +15,11 @@
 -export([window/1,window/4]).
 -export([palette/1]).
 
+%% Internal
+-export([init/1,
+	 handle_call/3, handle_cast/2, handle_event/2, handle_info/2,
+	 code_change/3, terminate/2]).
+
 -define(NEED_ESDL, 1).
 -define(NEED_OPENGL, 1).
 -include("wings.hrl").
@@ -31,6 +36,8 @@
 
 -record(pst, {st, sel=none, cols, w=?COLS_W, h=?COLS_H, knob=0}).
 
+-behaviour(wx_object).
+
 window(St) ->
     case wings_wm:is_window(palette) of
 	true ->
@@ -41,9 +48,30 @@ window(St) ->
 	    Pos  = {DeskW-5,DeskY+55},
 	    Size = {?COLS_W*?BOX_W+?COLS_W*?BORD+?BORD*2,
 		    ?COLS_H*?BOX_H+?COLS_H*?BORD+?BORD*2},
+	    do_window(Pos, Size, [], St),
 	    window(Pos, Size, [], St),
 	    keep
     end.
+
+
+%% Helpers
+%%%%%%%% Palette bar internals %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+do_window(Pos, Size, Ps, St) ->
+    Frame = ?GET(top_frame),
+    Cols = get_all_colors(St),
+    Window = wx_object:start_link(?MODULE, [Frame, Pos, Size, Ps, Cols], []),
+    wings_wm:new(palette_wx, Window, {push, fun(Ev) -> forward_event(Ev, Window) end}),
+    F = fun({color,_}) -> yes;
+	   ({material, _}) -> yes;
+	   (_) -> no
+	end,
+    wings_wm:set_prop(palette_wx, drag_filter, F),
+    keep.
+
+forward_event(Ev, Window) ->
+    wx_object:cast(Window, Ev),
+    keep.
 
 window(Pos, {W,_}=Size, Ps, St) ->
     Cols = get_all_colors(St),
@@ -530,3 +558,45 @@ add_cols([Col|R], Acc) when tuple_size(Col) =:= 3 ->
 add_cols([Attr|R], Acc) ->
     add_cols(R, [wings_va:attr(color, Attr)|Acc]);
 add_cols([], Acc) -> Acc.
+
+-record(state, {frame, cols}).
+
+init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
+    try
+	{ColsW,ColsH} = calc_size(Cols0,W),
+	FStyle = {style, ?wxCAPTION bor ?wxCLOSE_BOX bor ?wxRESIZE_BORDER},
+	Frame = wxMiniFrame:new(Parent, ?wxID_ANY, title(),
+			    [FStyle, {pos, Pos}, {size, Size}]),
+	Sz = wxGridSizer:new(ColsW, [{vgap, ?BORD},{hgap, ?BORD}]),
+	Cols = add_empty(Cols0,ColsW,ColsH),
+	lists:foldl(fun(Col, Id) ->
+			    wxSizer:add(Sz, make_bitmap(Frame, Id, Col)),
+			    Id+1
+		    end, 1, Cols),
+	wxWindow:setSizerAndFit(Frame, Sz),
+	wxFrame:show(Frame),
+	{Frame, #state{frame=Frame, cols=Cols}}
+    catch _:Reason ->
+	    io:format("CRASH: ~p ~p ~p~n",[?MODULE, Reason, erlang:get_stacktrace()])
+    end.
+
+make_bitmap(Parent, Id, none) ->
+    make_bitmap(Parent, Id, {1.0,1.0,1.0});
+make_bitmap(Parent, Id, Col) ->
+    {R,G,B} = wings_color:rgb3bv(Col),
+    Im = wxImage:new(1,1,<<R,G,B>>),
+    wxImage:rescale(Im, ?BOX_W, ?BOX_H),
+    BM = wxBitmap:new(Im),
+    Static = wxStaticBitmap:new(Parent, Id, BM),
+    wxImage:destroy(Im),
+    wxBitmap:destroy(BM),
+    Static.
+
+handle_event(_Ev, _State) -> ok.
+
+handle_call(_Req, _From, State) -> {reply, ok, State}.
+handle_cast(_Req, State) -> {noreply, State}.
+handle_info(_Msg, State) -> {noreply, State}.
+
+code_change(_From, _To, State) -> State.
+terminate(_Reason, _State) -> normal.
