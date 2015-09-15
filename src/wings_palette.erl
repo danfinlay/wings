@@ -69,6 +69,7 @@ do_window(Pos, Size, Ps, St) ->
     wings_wm:set_prop(palette_wx, drag_filter, F),
     keep.
 
+forward_event(redraw, _Window) -> keep;
 forward_event(Ev, Window) ->
     wx_object:cast(Window, Ev),
     keep.
@@ -156,7 +157,7 @@ event(resized, Pst=#pst{cols=Cols0,w=CW,h=CH}) ->
 	    end,
     update_scroller(0,Visible,ColsH),
     Cols1 = del_trailing(Cols0),
-    Cols = add_empty(Cols1,ColsW,ColsH),
+    Cols  = add_empty(Cols1,ColsW,ColsH),
     get_event(Pst#pst{knob=0,cols=Cols,w=ColsW,h=ColsH});
 
 event({set_knob_pos, Pos}, Pst = #pst{h=N,knob=Knob}) ->
@@ -559,44 +560,115 @@ add_cols([Attr|R], Acc) ->
     add_cols(R, [wings_va:attr(color, Attr)|Acc]);
 add_cols([], Acc) -> Acc.
 
--record(state, {frame, cols}).
+-record(state, {frame, win, sz, cols}).
 
 init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
     try
 	{ColsW,ColsH} = calc_size(Cols0,W),
 	FStyle = {style, ?wxCAPTION bor ?wxCLOSE_BOX bor ?wxRESIZE_BORDER},
-	Frame = wxMiniFrame:new(Parent, ?wxID_ANY, title(),
-			    [FStyle, {pos, Pos}, {size, Size}]),
+	Frame = wxMiniFrame:new(Parent, ?wxID_ANY, title(), [FStyle, {pos, Pos}]),
+	wxWindow:setClientSize(Frame, Size),
+	Win = wxScrolledWindow:new(Frame),
 	Sz = wxGridSizer:new(ColsW, [{vgap, ?BORD},{hgap, ?BORD}]),
 	Cols = add_empty(Cols0,ColsW,ColsH),
-	lists:foldl(fun(Col, Id) ->
-			    wxSizer:add(Sz, make_bitmap(Frame, Id, Col)),
-			    Id+1
-		    end, 1, Cols),
-	wxWindow:setSizerAndFit(Frame, Sz),
+	manage_bitmaps(Win, Sz, Cols, []),
+	wxWindow:setSizer(Win, Sz),
+	wxScrolledWindow:setScrollRate(Win, 0, ?BOX_H+?BORD),
+	wxWindow:connect(Win, size, [{skip, true}]),
+	wxFrame:connect(Frame, activate),
 	wxFrame:show(Frame),
-	{Frame, #state{frame=Frame, cols=Cols}}
+	{Frame, #state{frame=Frame, win=Win, sz=Sz, cols=Cols}}
     catch _:Reason ->
 	    io:format("CRASH: ~p ~p ~p~n",[?MODULE, Reason, erlang:get_stacktrace()])
     end.
 
+handle_event(#wx{event=#wxSize{size={W,H}}},
+	     #state{cols=Cols0, win=Win, sz=Sizer} = State) ->
+    Cols1 = del_trailing(Cols0),
+    {ColsW, ColsH0} = calc_size(Cols1, W),
+    Visible = H div (?BOX_H+?BORD),
+    ColsH = if Visible =< ColsH0 -> ColsH0;
+	       Visible > ColsH0 -> Visible
+	    end,
+    wxGridSizer:setCols(Sizer, ColsW),
+    Cols = add_empty(Cols1,ColsW,ColsH),
+    manage_bitmaps(Win, Sizer, Cols, Cols0),
+    {noreply, State#state{cols=Cols}};
+handle_event(#wx{event=#wxActivate{active=Active}}, State) ->
+    case Active of
+	true ->
+	    L = wings_msg:button_format(?__(1,"Assign color to selection")),
+	    MR = wings_msg:button_format([],
+					 ?__(2,"Edit color"),
+					 ?__(3,"Show menu")),
+	    Mods = wings_msg:free_modifier(),
+	    ModName = wings_msg:mod_name(Mods),
+	    CL = [ModName,$+,wings_msg:button_format(?__(4,"Clear color"))],
+	    Msg = wings_msg:join([L,CL,MR]),
+	    wings_wm:message(Msg);
+	false -> ignore
+    end,
+    {noreply, State};
+handle_event(Ev, State) ->
+    io:format("~p:~p Got unexpected event ~p~n", [?MODULE,?LINE, Ev]),
+    {noreply, State}.
+
+handle_call(Req, _From, State) ->
+    io:format("~p:~p Got unexpected call ~p~n", [?MODULE,?LINE, Req]),
+    {reply, ok, State}.
+handle_cast(Req, State) ->
+    io:format("~p:~p Got unexpected cast ~p~n", [?MODULE,?LINE, Req]),
+    {noreply, State}.
+handle_info(Msg, State) ->
+    io:format("~p:~p Got unexpected info ~p~n", [?MODULE,?LINE, Msg]),
+    {noreply, State}.
+
+code_change(_From, _To, State) ->
+    State.
+
+terminate(_Reason, #state{frame=Frame}) ->
+    wxFrame:destroy(Frame),
+    wings ! {external, fun(_) -> wings_wm:delete(palette_wx) end},
+    normal.
+
+manage_bitmaps(Win, Sz, Cols, Old) ->
+    LenCols = length(Cols),
+    LenOld  = length(Old),
+    if LenCols =:= LenOld ->
+	    ignore;
+       LenCols > LenOld ->
+	    wx:foldl(fun(_Col, Id) when Id =< LenOld ->
+			     Id+1;
+			(Col, Id) ->
+			     wxSizer:add(Sz, make_bitmap(Win, Id, Col)),
+			     Id+1
+		     end, 1, Cols);
+       LenCols < LenOld ->
+	    Cleanup = fun(Id) ->
+			      StBM = wxSizerItem:getWindow(wxSizer:getItem(Sz, Id-1)),
+			      wxSizer:remove(Sz, Id-1),
+			      wxWindow:destroy(StBM)
+		      end,
+	    wx:foreach(Cleanup, lists:seq(LenOld, LenCols+1, -1))
+    end,
+    ok.
+
 make_bitmap(Parent, Id, none) ->
     make_bitmap(Parent, Id, {1.0,1.0,1.0});
-make_bitmap(Parent, Id, Col) ->
-    {R,G,B} = wings_color:rgb3bv(Col),
-    Im = wxImage:new(1,1,<<R,G,B>>),
-    wxImage:rescale(Im, ?BOX_W, ?BOX_H),
-    BM = wxBitmap:new(Im),
+make_bitmap(Parent, Id, FloatCol) ->
+    Col = wings_color:rgb3bv(FloatCol),
+    BM = wxBitmap:new(?BOX_H,?BOX_W),
+    DC = wxMemoryDC:new(),
+    wxMemoryDC:selectObject(DC, BM),
+    Brush = wxBrush:new(Col),
+    %% wxDC:setBackground(DC, Brush),
+    wxDC:clear(DC),
+    wxDC:setBrush(DC, Brush),
+    wxDC:setPen(DC, ?wxBLACK_PEN),
+    wxDC:drawRoundedRectangle(DC, {0,0, ?BOX_H,?BOX_W}, 2),
+    wxMemoryDC:destroy(DC),
     Static = wxStaticBitmap:new(Parent, Id, BM),
-    wxImage:destroy(Im),
+    [wxWindow:connect(Static, Ev) || Ev <- [left_up, middle_up, right_up]],
+    wxBrush:destroy(Brush),
     wxBitmap:destroy(BM),
     Static.
-
-handle_event(_Ev, _State) -> ok.
-
-handle_call(_Req, _From, State) -> {reply, ok, State}.
-handle_cast(_Req, State) -> {noreply, State}.
-handle_info(_Msg, State) -> {noreply, State}.
-
-code_change(_From, _To, State) -> State.
-terminate(_Reason, _State) -> normal.
