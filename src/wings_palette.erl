@@ -32,7 +32,7 @@
 -define(COLS_W, 8).
 -define(COLS_H, 8).
 
--define(BORD, 2).
+-define(BORD, 0).
 
 -record(pst, {st, sel=none, cols, w=?COLS_W, h=?COLS_H, knob=0}).
 
@@ -449,12 +449,10 @@ add_empty(L,N) ->
     L ++ lists:duplicate(N,none).
 
 calc_size(Cols, W) ->
-    calc_size(Cols, W, false).
-calc_size(Cols, W, ReduceOne) ->
-    ColsW0 = (W-4) div (?BOX_W+?BORD),
+    calc_size(Cols, W, ?BOX_W, false).
+calc_size(Cols, W, BW, ReduceOne) ->
+    ColsW0 = (W-4) div (BW+?BORD),
     ColsW = if ColsW0 < 1 ->
-		    1;
-	       ColsW0 < 1, ReduceOne ->
 		    1;
 	       ReduceOne ->
 		    ColsW0 - 1;
@@ -570,18 +568,22 @@ add_cols([Attr|R], Acc) ->
     add_cols(R, [wings_va:attr(color, Attr)|Acc]);
 add_cols([], Acc) -> Acc.
 
--record(state, {self, frame, win, sz, cols, timer, empty}).
+-record(state, {self, frame, win, sz, bsz, cols, timer, empty}).
 
 init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
     try
-	{ColsW,ColsH} = calc_size(Cols0,W),
+	Empty = make_bitmap(none),
+	Tmp = make_button(Parent, -1, none, Empty),
+	BSz = {BW,_} = wxWindow:getSize(Tmp),
+	wxWindow:destroy(Tmp),
+	{ColsW,ColsH} = calc_size(Cols0,W,BW,false),
+	io:format("Button ~p => ~p~n",[BSz, {ColsW, ColsH}]),
 	FStyle = {style, ?wxCAPTION bor ?wxCLOSE_BOX bor ?wxRESIZE_BORDER},
 	Frame = wxMiniFrame:new(Parent, ?wxID_ANY, title(), [FStyle, {pos, Pos}]),
 	wxWindow:setClientSize(Frame, Size),
 	Win = wxScrolledWindow:new(Frame),
 	Sz = wxGridSizer:new(ColsW, [{vgap, ?BORD},{hgap, ?BORD}]),
 	Cols = add_empty(Cols0,ColsW,ColsH),
-	Empty = make_bitmap(none),
 	manage_bitmaps(Win, Sz, Cols, [], Empty),
 	BorderSz = wxBoxSizer:new(?wxHORIZONTAL),
 	wxSizer:add(BorderSz, Sz,
@@ -593,7 +595,9 @@ init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
 	wxWindow:connect(Win, command_button_clicked),
 	wxFrame:connect(Frame, activate),
 	wxFrame:show(Frame),
-	{Frame, #state{self=self(), frame=Frame, win=Win, sz=Sz, cols=Cols, empty=Empty}}
+	{Frame, #state{self=self(),
+		       frame=Frame, win=Win, sz=Sz,
+		       cols=Cols, bsz=BSz, empty=Empty}}
     catch _:Reason ->
 	    io:format("CRASH: ~p ~p ~p~n",[?MODULE, Reason, erlang:get_stacktrace()])
     end.
@@ -649,18 +653,20 @@ terminate(_Reason, #state{frame=Frame}) ->
     wings ! {external, fun(_) -> wings_wm:delete(palette_wx) end},
     normal.
 
-resize({W,H}, #state{cols=Cols0, empty=Empty, win=Win, sz=Sizer} = State) ->
+resize({W,H}, #state{cols=Cols0, bsz={BW,BH}, empty=Empty, win=Win, sz=Sizer} = State) ->
     Cols1 = del_trailing(Cols0),
-    {ColsW0, ColsH0} = calc_size(Cols1, W),
-    Visible = (H-5) div (?BOX_H+?BORD),
+    {ColsW0, ColsH0} = calc_size(Cols1, W, BW, false),
+    Visible = (H-5) div (BH+?BORD),
     {ColsW,ColsH} =
-	if Visible < ColsH0 ->  %% Reduce a column for scrollbar
-		calc_size(Cols1, W, true);
-	   Visible > ColsH0 ->
+	if Visible < ColsH0, (W - ColsW0 * BW) < 20 ->
+		%% Reduce a column for scrollbar
+		calc_size(Cols1, W, BW, true);
+	   Visible < ColsH0 ->
 		{ColsW0, Visible};
 	   true ->
 		{ColsW0, Visible}
 	end,
+    io:format("Button ~p (~p) => ~p~n",[{BW,BH}, Visible < ColsH0, {ColsW, ColsH}]),
     Cols = add_empty(Cols1,ColsW,ColsH),
     wxGridSizer:setCols(Sizer, ColsW),
     manage_bitmaps(Win, Sizer, Cols, Cols0, Empty),
@@ -697,7 +703,7 @@ make_button(Parent, Id, FloatCol, Empty) ->
 		       none -> {false, Empty};
 		       _ -> {true, make_bitmap(FloatCol)}
 		   end,
-    Static = wxBitmapButton:new(Parent, Id, BM, [{style, ?wxBORDER_NONE}]),
+    Static = wxBitmapButton:new(Parent, Id, BM), %% , [{style, ?wxBORDER_NONE}]),
     Delete andalso wxBitmap:destroy(BM),
     [wxWindow:connect(Static, Ev) || Ev <- [middle_up, right_up]],
     Static.
@@ -707,15 +713,16 @@ make_bitmap(Col0) ->
 		none -> wxBrush:new({255,255,255,0});
 		FloatC -> wxBrush:new(wings_color:rgb3bv(FloatC))
 	    end,
-    BM = wxBitmap:new(?BOX_H,?BOX_W),
+    {BOX_H, BOX_W} = {?BOX_H-3,?BOX_W-3},
+    BM = wxBitmap:new(BOX_H,BOX_W),
     DC = wxMemoryDC:new(),
     wxMemoryDC:selectObject(DC, BM),
     wxDC:clear(DC),
     wxDC:setBrush(DC, Brush),
     wxDC:setPen(DC, ?wxBLACK_PEN),
-    wxDC:drawRoundedRectangle(DC, {0,0, ?BOX_H,?BOX_W}, 2),
-    Col0 == none andalso 
-	wxDC:drawLine(DC, {3,3}, {?BOX_H-3,?BOX_W-3}),
+    wxDC:drawRoundedRectangle(DC, {0,0, BOX_H,BOX_W}, 2),
+    Col0 == none andalso
+	wxDC:drawLine(DC, {3,3}, {BOX_H-3,BOX_W-3}),
     wxMemoryDC:destroy(DC),
     wxBrush:destroy(Brush),
     BM.
