@@ -22,7 +22,10 @@ FILES = standard.vs \
 	image_filter.fs \
 	wpc_edgefilter.auv \
 	edge_filter.fs \
-	README-shaders.txt
+	README-shaders.txt \
+	wpc_normal.auv \
+	normal.fs \
+	normal.vs
 
 
 TARGETFILES = $(FILES:%=$(DIR)/%)

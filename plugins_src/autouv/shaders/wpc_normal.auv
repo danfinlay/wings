@@ -14,5 +14,6 @@
 {name, "Object Normals"}.  % The name in the shader selector
 {vertex_shader, "normal.vs"}. % Vertex shader used
 {fragment_shader, "normal.fs"}.  % Fragment shader used
-{requires, [normal]}.
-
+{requires, [normal, binormal]}.
+{uniform, bool, "w3d_tangentspace", false, "Tangenspace Normals"}.
+{uniform, image, "normalmap", undefined, "WorldSpace Normal"}.
