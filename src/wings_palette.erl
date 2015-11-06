@@ -26,15 +26,16 @@
 
 -import(lists, [foldl/3,reverse/1,keyfind/3]).
 
--define(BOX_W, 16).
--define(BOX_H, 16).
+-define(BOX_W, 20).
+-define(BOX_H, 20).
 
 -define(COLS_W, 8).
 -define(COLS_H, 8).
 
--define(BORD, 0).
+-define(BORD, 2).
 
 -record(pst, {st, sel=none, cols, w=?COLS_W, h=?COLS_H, knob=0}).
+-record(state, {self, frame, win, sz, bsz, cols, timer, empty}).
 
 -behaviour(wx_object).
 
@@ -70,7 +71,10 @@ do_window(Pos, Size, Ps, St) ->
     keep.
 
 forward_event(redraw, _Window) -> keep;
+forward_event({open_menu, Id, Pos, Cols}, _Window) ->
+    do_menu(Id, Pos, Cols);
 forward_event(Ev, Window) ->
+    io:format("Wings Ev: ~p ~n", [Ev]),
     wx_object:cast(Window, Ev),
     keep.
 
@@ -264,11 +268,11 @@ event(#mousebutton{button=1,x=X,y=Y,state=?SDL_RELEASED}, #pst{sel=Sel,cols=Cols
 	    get_event(Pst#pst{sel=none})
     end;
 
-event(#mousebutton{x=X0,y=Y0}=Ev, Pst) ->
+event(#mousebutton{x=X0,y=Y0}=Ev, #pst{cols=Cols}=Pst) ->
     Id = select(X0,Y0,Pst),
     case wings_menu:is_popup_event(Ev) of
 	{yes,X,Y,_} when is_integer(Id) ->
-	    do_menu(Id, X, Y, Pst);
+	    do_menu(Id, {X, Y}, Cols);
 	_ -> keep
     end;
 
@@ -325,9 +329,9 @@ update_scroller(First,Visible,Total) ->
     Name = wings_wm:this(),
     wings_wm:set_knob(Name, First/Total, Visible/Total).
 
-do_menu(Id,X,Y,#pst{cols=Cols}) ->
+do_menu(Id,{X,Y},Cols) ->
     Menu = [{?__(1,"Edit"),{'VALUE',{edit,Id}},?__(2,"Edit color")}],
-    Smooth = case lists:nth(Id+1, Cols) of
+    Smooth = case lists:nth(Id, Cols) of
 		 none ->
 		     [{?__(3,"Interpolate"),{'VALUE',{smooth,Id}},
 		       ?__(4,"Interpolate Empty Colors")}];
@@ -466,7 +470,11 @@ calc_size(Cols, W, BW, ReduceOne) ->
 update(Cols,Pst=#pst{st=St0}) ->
     St = St0#st{pal=Cols},
     wings_wm:send(geom, {new_state,St}),
-    Pst#pst{cols=Cols, st=St}.
+    Pst#pst{cols=Cols, st=St};
+update(Cols,#state{}=State) ->
+    wings_wm:psend(palette_wx, {update_state,Cols}),
+    State#state{cols=Cols}.
+
 
 interpolate([{R1,G1,B1}|_],[Start={R2,G2,B2}|_], N) ->
     R = (R2-R1)/(N+1),	  B = (B2-B1)/(N+1),	G = (G2-G1)/(N+1),
@@ -568,7 +576,7 @@ add_cols([Attr|R], Acc) ->
     add_cols(R, [wings_va:attr(color, Attr)|Acc]);
 add_cols([], Acc) -> Acc.
 
--record(state, {self, frame, win, sz, bsz, cols, timer, empty}).
+
 
 init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
     try
@@ -602,6 +610,16 @@ init([Parent, Pos, Size = {W,_}, _Ps, Cols0]) ->
 	    io:format("CRASH: ~p ~p ~p~n",[?MODULE, Reason, erlang:get_stacktrace()])
     end.
 
+handle_event(Ev=#wx{id=Id, event=#wxMouse{}}, #state{cols=Cols}=State) ->
+    case wings_menu:is_popup_event(Ev) of
+	{yes, GlobalPos} ->
+	    LocalFramePos = wxWindow:screenToClient(?GET(top_frame), GlobalPos),
+	    wings_wm:psend(palette_wx, {open_menu, Id, LocalFramePos, Cols});
+	_ ->
+	    ok
+    end,
+    {noreply, State};
+
 handle_event(#wx{event=#wxSize{size=Sz}}, #state{timer=TRef} = State) ->
     TRef =/= undefined andalso timer:cancel(TRef),
     {ok, Timer} = timer:send_after(150, {resize, Sz}),
@@ -628,6 +646,34 @@ handle_event(Ev, State) ->
 handle_call(Req, _From, State) ->
     io:format("~p:~p Got unexpected call ~p~n", [?MODULE,?LINE, Req]),
     {reply, ok, State}.
+
+handle_cast({action, {palette, {edit, Id}}}, State) ->
+    {noreply, set_color(Id, State)};
+
+handle_cast({action, {palette, {smooth, Id0}}}, #state{cols=Cols0, win=Win} = State) ->
+    {Bef0,After0} = lists:split(Id0-1, Cols0),
+    {BC, Bef1} = del_empty(reverse(Bef0)),
+    {AC, Aft1} = del_empty(After0),
+    case interpolate(Bef1,Aft1,AC+BC) of
+	no_start ->
+	    wings_u:message(?__(1,"No start color found.")),
+	    {noreply, State};
+	no_end ->
+	    wings_u:message(?__(2,"No end color found.")),
+	    {noreply, State};
+	IntCols ->
+	    Update = fun(Col, Id) -> setColor(Id, Col, Win), Id+1 end,
+	    lists:foldl(Update, length(Bef1)+1, IntCols),
+	    Cols = reverse(Bef1) ++ IntCols ++ Aft1,
+	    {noreply, update(Cols, State)}
+    end;
+
+handle_cast({action, {palette, clear_all}}, #state{cols=Cols0, win=Win} = State) ->
+    Cols = lists:duplicate(length(Cols0), none),
+    Update = fun(Col, Id) -> setColor(Id, Col, Win), Id+1 end,
+    lists:foldl(Update, 1, Cols),
+    {noreply, update(Cols, State)};
+
 handle_cast(Req, State) ->
     io:format("~p:~p Got unexpected cast ~p~n", [?MODULE,?LINE, Req]),
     {noreply, State}.
@@ -666,7 +712,7 @@ resize({W,H}, #state{cols=Cols0, bsz={BW,BH}, empty=Empty, win=Win, sz=Sizer} = 
 	   true ->
 		{ColsW0, Visible}
 	end,
-    io:format("Button ~p (~p) => ~p~n",[{BW,BH}, Visible < ColsH0, {ColsW, ColsH}]),
+    %% io:format("Button ~p (~p) => ~p~n",[{BW,BH}, Visible < ColsH0, {ColsW, ColsH}]),
     Cols = add_empty(Cols1,ColsW,ColsH),
     wxGridSizer:setCols(Sizer, ColsW),
     manage_bitmaps(Win, Sizer, Cols, Cols0, Empty),
@@ -681,11 +727,11 @@ manage_bitmaps(Win, Sz, Cols, Old, Empty) ->
        LenCols > LenOld ->
 	    wxWindow:freeze(Win),
 	    wx:foldl(fun(_Col, Id) when Id =< LenOld ->
-				Id+1;
-			   (Col, Id) ->
-				wxSizer:add(Sz, make_button(Win, Id, Col, Empty)),
-				Id+1
-			end, 1, Cols),
+			     Id+1;
+			(Col, Id) ->
+			     wxSizer:add(Sz, make_button(Win, Id, Col, Empty)),
+			     Id+1
+		     end, 1, Cols),
 	    wxWindow:thaw(Win),
 	    ok;
        LenCols < LenOld ->
@@ -703,10 +749,34 @@ make_button(Parent, Id, FloatCol, Empty) ->
 		       none -> {false, Empty};
 		       _ -> {true, make_bitmap(FloatCol)}
 		   end,
-    Static = wxBitmapButton:new(Parent, Id, BM), %% , [{style, ?wxBORDER_NONE}]),
+    Static = case os:type() of
+		 {win32, _} -> wxBitmapButton:new(Parent, Id, BM, [{style, ?wxBORDER_NONE}]);
+		 {_, _}     -> wxStaticBitmap:new(Parent, Id, BM)
+	     end,
     Delete andalso wxBitmap:destroy(BM),
-    [wxWindow:connect(Static, Ev) || Ev <- [middle_up, right_up]],
+    [wxWindow:connect(Static, Ev) || Ev <- [left_up, left_dclick, middle_up, right_up]],
     Static.
+
+set_color(Id, #state{win=Win, cols=Cols0} = State) ->
+    {Bef,[Prev|Rest]} = lists:split(Id-1, Cols0),
+    Result = fun(Color) -> {return, Color} end,
+    case wings_color:choose(color(Prev), Result) of
+	keep ->
+	    State;
+	Color ->
+	    Cols = Bef ++ [Color|Rest],
+	    setColor(Id, Color, Win),
+	    update(Cols, State)
+    end.
+
+setColor(Id, Color, Parent) ->
+    Bitmap = make_bitmap(Color),
+    Win = wxWindow:findWindow(Parent, Id),
+    case os:type() of
+	{win32, _} -> wxBitmapButton:setBitmapLabel(wx:typeCast(Win, wxBitmapButton), Bitmap);
+	{_, _}     -> wxStaticBitmap:setBitmap(wx:typeCast(Win, wxStaticBitmap), Bitmap)
+    end,
+    wxBitmap:destroy(Bitmap).
 
 make_bitmap(Col0) ->
     Brush = case Col0 of

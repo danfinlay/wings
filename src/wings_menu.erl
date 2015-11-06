@@ -50,14 +50,14 @@
 %%%      {L,M,R}      for pop-up menus
 %%%
 
-is_popup_event(#mousebutton{button=3,x=X0,y=Y0,state=State,mod=Mod}) ->
+is_popup_event(#mousebutton{button=3,x=X0,y=Y0,state=?SDL_RELEASED,mod=Mod}) ->
     {X,Y} = wings_wm:local2global(X0, Y0),
-    case State of
-	?SDL_RELEASED ->
-	    {yes,X,Y,Mod};
-	_Other -> no
-    end;
-is_popup_event(_Event) -> no.
+    {yes,X,Y,Mod};
+is_popup_event(#wx{obj=Win, event=#wxMouse{type=right_up, x=X0, y=Y0}}) ->
+    {yes, wxWindow:clientToScreen(Win, X0, Y0)};
+is_popup_event(_Event) ->
+    no.
+
 
 menu(X, Y, Owner, Name, Menu) ->
     wings_wm_menu:menu(X, Y, Owner, Name, Menu).
@@ -137,7 +137,7 @@ have_magnet(Ps, _) ->
 
 wx_popup_menu_init(X0,Y0,Names,Menus0) ->
     Owner = wings_wm:this(),
-    Popup = fun(X,Y) -> 
+    Popup = fun(X,Y) ->
 		    wx_popup_menu(X,Y,Names,Menus0,false,Owner)
 	    end,
     Popup(X0,Y0),
